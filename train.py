@@ -11,10 +11,10 @@ import time
 from pathlib import Path
 
 from model.network import CoFiI2P
-from data.tiers import tiers_pc_img_dataset
+from data.r3live import r3live_pc_img_dataset
 from data.kitti import kitti_pc_img_dataset
 from data.nuscenes import nuscenes_pc_img_dataset
-from data.options import Options_tiers,Options_KITTI,Options_Nuscenes
+from data.options import Options_r3live,Options_KITTI,Options_Nuscenes
 from model.loss import*
 
 def get_P_diff(P_pred_np,P_gt_np):
@@ -115,9 +115,9 @@ if __name__=='__main__':
 
     args = parser.parse_args()
 
-    if args.dataset == "tiers":
-        options = Options_tiers
-        dataset = tiers_pc_img_dataset
+    if args.dataset == "r3live":
+        options = Options_r3live
+        dataset = r3live_pc_img_dataset
     elif args.dataset == "kitti":
         options = Options_KITTI
         dataset = kitti_pc_img_dataset

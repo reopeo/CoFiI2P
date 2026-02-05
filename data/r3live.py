@@ -87,9 +87,9 @@ class FarthestSampler:
         return farthest_pts, farthest_pts_idx
 
 
-class tiers_pc_img_dataset(data.Dataset):
+class r3live_pc_img_dataset(data.Dataset):
     def __init__(self, opt,mode, is_front=False):
-        super(tiers_pc_img_dataset, self).__init__()
+        super(r3live_pc_img_dataset, self).__init__()
         for k,v in opt.__dict__.items():
             setattr(self,k,v)
         self.mode = mode
@@ -115,9 +115,9 @@ class tiers_pc_img_dataset(data.Dataset):
 
         # TODO: Set it.
         if mode == 'train':
-            seq_list = list(range(5))
+            seq_list = list(range(1))
         elif 'val' == mode:
-            seq_list = [5, 6]
+            seq_list = [0]
         else:
             raise Exception('Invalid mode.')
 

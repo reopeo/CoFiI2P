@@ -9,7 +9,7 @@ import cv2
 import datetime
 
 from model.network import CoFiI2P
-from data.tiers import tiers_pc_img_dataset
+from data.r3live import r3live_pc_img_dataset
 from data.kitti import kitti_pc_img_dataset
 from data.nuscenes import nuscenes_pc_img_dataset
 from data.options import * 
@@ -30,9 +30,9 @@ if __name__=='__main__':
     parser.add_argument("--eval_path", type=str, default = "eval_results", help = "path for evaluation files")
     args = parser.parse_args()
 
-    if args.dataset == "tiers":
-        opt = Options_tiers()
-        dataset = tiers_pc_img_dataset(opt,"val",is_front=False)
+    if args.dataset == "r3live":
+        opt = Options_r3live()
+        dataset = r3live_pc_img_dataset(opt,"val",is_front=False)
     elif args.dataset == "kitti":
         opt = Options_KITTI()
         dataset = kitti_pc_img_dataset(opt,"val",is_front=False)
