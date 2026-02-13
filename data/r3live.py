@@ -372,7 +372,13 @@ class r3live_pc_img_dataset(data.Dataset):
         fine_xy = np.floor(proj_points[0:2, :])
         fine_is_in_picture = (fine_xy[0, :] >= 0) & (fine_xy[0, :] <= (self.img_W*0.5 - 1)) & (fine_xy[1, :] >= 0) & (fine_xy[1, :] <= (self.img_H*0.5 - 1)) & (proj_points[2, :] > 0)
 
-        assert np.all(fine_is_in_picture==True)
+        num_in = int(np.sum(fine_is_in_picture))
+        num_out = int(np.sum(~fine_is_in_picture))
+        if num_out > 0:
+            print(f"[r3live] index={index}, seq={seq}, seq_i={seq_i}: fine projection {num_in} in / {num_out} out of image")
+            fine_xy[0, :] = np.clip(fine_xy[0, :], 0, self.img_W * 0.5 - 1)
+            fine_xy[1, :] = np.clip(fine_xy[1, :], 0, self.img_H * 0.5 - 1)
+            valid_kpt = False
 
         # get coarse inline points on fine feature map 
         fine_xy_kpts_index = fine_xy[1,:]*self.img_W*0.5 +fine_xy[0,:]
