@@ -45,17 +45,19 @@ def load_frame_paths(root: str, seq: str, frame_idx: int):
     img_dir = seq_dir / "img"
     K_dir = seq_dir / "K"
     pc_dir = seq_dir / "pc_with_normal"
+    gt_dir = seq_dir / "gt"
     calib_path = Path(root) / "calib" / f"{int(seq):02d}" / "calib.txt"
 
     img_path = img_dir / f"{frame_idx:06d}.npy"
     K_path = K_dir / f"{frame_idx:06d}.npy"
     pc_path = pc_dir / f"{frame_idx:06d}.npy"
+    gt_path = gt_dir / f"{frame_idx:06d}.npy"
 
-    for p in [img_path, K_path, pc_path, calib_path]:
+    for p in [img_path, K_path, pc_path, gt_path, calib_path]:
         if not p.exists():
             raise FileNotFoundError(f"Missing file: {p}")
 
-    return str(img_path), str(K_path), str(pc_path), str(calib_path)
+    return str(img_path), str(K_path), str(pc_path), str(gt_path), str(calib_path)
 
 
 # =========================
@@ -177,7 +179,7 @@ def main():
     args = parser.parse_args()
 
     # 1) ファイルパスを取得
-    img_path, K_path, pc_path, calib_path = load_frame_paths(args.root, args.seq, args.frame)
+    img_path, K_path, pc_path, gt_path, calib_path = load_frame_paths(args.root, args.seq, args.frame)
 
     # 2) ロード
     img = np.load(img_path)  # (H,W,3) uint8
@@ -212,15 +214,22 @@ def main():
     intensity = pc_pack[3:4, :].reshape(-1)
     normals = pc_pack[4:7, :]
 
-    # 4) calib 読み込み → Velodyne -> Camera の変換 (calib.txt に Tr のみが入っている想定)
+    # 4) GT 読み込み → inv(GT) を点群に適用して画像と位置合わせ
+    gt = np.load(gt_path).astype(np.float32)  # (4,4)
+    gt_inv = np.linalg.inv(gt).astype(np.float32)
+    # GT の逆変換を LiDAR 座標系で適用（Tr 変換前）
+    xyz = gt_inv[0:3, 0:3] @ xyz + gt_inv[0:3, 3:]
+    normals = gt_inv[0:3, 0:3] @ normals
+
+    # 5) calib 読み込み → Velodyne -> Camera の変換 (calib.txt に Tr のみが入っている想定)
     Tr = load_kitti_calib(calib_path)
     T_cam_velo = Tr.astype(np.float32)
 
-    # 5) 投影 (画像側のKはフレームごとに保存されたものを使用)
+    # 6) 投影 (画像側のKはフレームごとに保存されたものを使用)
     u, v, z = project_points(K, T_cam_velo, xyz)
 
-    # 6) 可視化
-    # 6-1. 3D (Open3D)
+    # 7) 可視化
+    # 7-1. 3D (Open3D)
     if args.color_mode == "gray":
         color_mode = "none"
     else:
@@ -230,7 +239,7 @@ def main():
                           voxel_size=(args.voxel_size if args.voxel_size > 0 else None),
                           intensity_cmap=args.intensity_cmap)
 
-    # 6-2. 2D (Matplotlib) with projection overlay
+    # 7-2. 2D (Matplotlib) with projection overlay
     visualize_image_with_projection(img, u, v, z,
                                     point_stride=max(1, args.stride),
                                     dot_size=max(1, args.dot_size),

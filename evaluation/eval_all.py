@@ -7,6 +7,7 @@ from scipy.spatial.transform import Rotation
 from pathlib import Path
 import cv2
 import datetime
+import json
 
 from model.network import CoFiI2P
 from data.r3live import r3live_pc_img_dataset
@@ -141,6 +142,39 @@ if __name__=='__main__':
         # print('per frame time:', np.mean(total_time))
         np.save('%s_t_error.npy'%args.dataset, t_diff_set)
         np.save('%s_r_error.npy'%args.dataset, angles_diff_set)
-            
-            
-            
+
+        # compute metrics (use rre = rotation error in deg, rte = translation error in m)
+        rre = angles_diff_set
+        rte = t_diff_set
+        finite_mask = np.isfinite(rre) & np.isfinite(rte)
+        rre_finite = rre[finite_mask]
+        rte_finite = rte[finite_mask]
+
+        metrics = {}
+        # 1) none/none -> overall means already present (alias for clarity)
+        metrics["mean_rre_deg_none"] = float(np.mean(rre_finite)) if rre_finite.size else float("inf")
+        metrics["mean_rte_m_none"] = float(np.mean(rte_finite)) if rte_finite.size else float("inf")
+        # 2) 45 deg / 10 m
+        mask_45_10 = (rre_finite < 45.0) & (rte_finite < 10.0)
+        if mask_45_10.any():
+            metrics["mean_rre_deg_rre45_rte10"] = float(np.mean(rre_finite[mask_45_10]))
+            metrics["mean_rte_m_rre45_rte10"] = float(np.mean(rte_finite[mask_45_10]))
+        else:
+            metrics["mean_rre_deg_rre45_rte10"] = float("inf")
+            metrics["mean_rte_m_rre45_rte10"] = float("inf")
+        # 3) 10 deg / 5 m
+        mask_10_5 = (rre_finite < 10.0) & (rte_finite < 5.0)
+        if mask_10_5.any():
+            metrics["mean_rre_deg_rre10_rte5"] = float(np.mean(rre_finite[mask_10_5]))
+            metrics["mean_rte_m_rre10_rte5"] = float(np.mean(rte_finite[mask_10_5]))
+        else:
+            metrics["mean_rre_deg_rre10_rte5"] = float("inf")
+            metrics["mean_rte_m_rre10_rte5"] = float("inf")
+
+        # print and save metrics
+        print("metrics:", metrics)
+        metrics_path = eval_path / "metrics.json"
+        with open(metrics_path, "w") as f:
+            json.dump(metrics, f, indent=2)
+
+

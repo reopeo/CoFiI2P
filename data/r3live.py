@@ -19,7 +19,7 @@ from model.kpconv.preprocess_data import precompute_point_cloud_stack_mode, prec
 from model.network import point2node
 # from ...model.kpconv.kp_backbone import KPConvFPN
 
-class KittiCalibHelper:
+class R3liveCalibHelper:
     def __init__(self, root_path):
         self.root_path = root_path
         self.calib_matrix_dict = self.read_calib_files()
@@ -94,7 +94,7 @@ class r3live_pc_img_dataset(data.Dataset):
             setattr(self,k,v)
         self.mode = mode
         self.dataset = self.make_kitti_dataset(self.data_path, mode)
-        self.calibhelper = KittiCalibHelper(self.data_path)
+        self.calibhelper = R3liveCalibHelper(self.data_path)
         self.farthest_sampler = FarthestSampler(dim=3)
         self.is_front=is_front
         print("%s set: %d frames"%(mode,len(self.dataset)))
@@ -115,9 +115,9 @@ class r3live_pc_img_dataset(data.Dataset):
 
         # TODO: Set it.
         if mode == 'train':
-            seq_list = list(range(1))
+            seq_list = list(range(4))
         elif 'val' == mode:
-            seq_list = [0]
+            seq_list = [4, 5, 6, 7, 8, 9, 10]
         else:
             raise Exception('Invalid mode.')
 
@@ -129,12 +129,14 @@ class r3live_pc_img_dataset(data.Dataset):
                 root_path, 'sequences', '%02d' % seq, 'pc_with_normal')
             K_folder = os.path.join(
                 root_path, 'sequences', '%02d' % seq, 'K')
+            gt_folder = os.path.join(
+                root_path, 'sequences', '%02d' % seq, 'gt')
 
             sample_num = round(len(os.listdir(img_folder)))
 
             for i in range(skip_start_end, sample_num - skip_start_end):
                 dataset.append((img_folder, pc_folder,
-                                K_folder, seq, i, sample_num))
+                                K_folder, gt_folder, seq, i, sample_num))
                 
         return dataset
 
@@ -257,7 +259,7 @@ class r3live_pc_img_dataset(data.Dataset):
         np.random.seed(seed)
         random.seed(seed)
         # obtain data from disk
-        img_folder, pc_folder, K_folder, seq, seq_i, _ = self.dataset[index]
+        img_folder, pc_folder, K_folder, gt_folder, seq, seq_i, _ = self.dataset[index]
         img = np.load(os.path.join(img_folder, '%06d.npy' % seq_i))
         data = np.load(os.path.join(pc_folder, '%06d.npy' % seq_i))
         intensity = data[3:4, :]
@@ -276,9 +278,11 @@ class r3live_pc_img_dataset(data.Dataset):
         pc, intensity, sn = self.downsample_with_intensity_sn(pc, intensity, sn, voxel_grid_downsample_size=0.1)
         pc, intensity, sn = self.downsample_np(pc, intensity,sn)
 
-        P = self.generate_random_transform(self.mode)
-        pc = np.dot(P[0:3, 0:3], pc) + P[0:3, 3:]
-        sn = np.dot(P[0:3, 0:3], sn)
+        # Load ground truth transformation (LiDAR motion between img and pc acquisition)
+        P_lidar = np.load(os.path.join(gt_folder, '%06d.npy' % seq_i)).astype(np.float32)
+        # Convert from LiDAR frame to camera frame: P_cam = Tr @ P_lidar @ inv(Tr)
+        P_Tr_inv = np.linalg.inv(P_Tr).astype(np.float32)
+        P = (P_Tr @ P_lidar @ P_Tr_inv).astype(np.float32)
         
         # 2. get multi-level points and neighbor indexes for pyramid feature map
         num_stages = 5
@@ -331,14 +335,25 @@ class r3live_pc_img_dataset(data.Dataset):
         is_in_picture = (xy[0, :] >= 1) & (xy[0, :] <= (self.img_W*scale_size - 3)) & (xy[1, :] >= 1) & (xy[1, :] <= (self.img_H*scale_size - 3)) & (proj_coarse_points[2, :] > 0)
         coarse_points_mask[:, is_in_picture] = 1.
 
-        pc_kpt_idx=np.where(coarse_points_mask.squeeze()==1)[0]
-        # assert len(pc_kpt_idx) >= 64
-        sel_index=np.random.permutation(len(pc_kpt_idx))[0:self.num_kpt]
-        pc_kpt_idx=pc_kpt_idx[sel_index]
+        pc_kpt_idx = np.where(coarse_points_mask.squeeze() == 1)[0]
+        if len(pc_kpt_idx) >= self.num_kpt:
+            index = np.random.permutation(len(pc_kpt_idx))[0:self.num_kpt]
+            valid_kpt = True
+            pc_kpt_idx = pc_kpt_idx[index]
+        else:
+            valid_kpt = False
+            pc_kpt_idx = np.zeros((self.num_kpt,), dtype=np.int64)
 
-        pc_outline_idx=np.where(coarse_points_mask.squeeze()==0)[0]
-        sel_index=np.random.permutation(len(pc_outline_idx))[0:self.num_kpt]
-        pc_outline_idx=pc_outline_idx[sel_index]
+        pc_outline_idx = np.where(coarse_points_mask.squeeze() == 0)[0]
+        if len(pc_outline_idx) >= self.num_kpt:
+            index = np.random.permutation(len(pc_outline_idx))[0:self.num_kpt]
+            pc_outline_idx = pc_outline_idx[index]
+        else:
+            if len(pc_outline_idx) == 0:
+                pc_outline_idx = np.zeros((self.num_kpt,), dtype=np.int64)
+            else:
+                idx = np.random.choice(len(pc_outline_idx), size=self.num_kpt, replace=True)
+                pc_outline_idx = pc_outline_idx[idx]
 
         xy2 = xy[:, is_in_picture]
         img_mask_s8 = coo_matrix((np.ones_like(xy2[0, :]), (xy2[1, :], xy2[0, :])), shape=(int(self.img_H*scale_size), int(self.img_W*scale_size))).toarray()
@@ -382,7 +397,6 @@ class r3live_pc_img_dataset(data.Dataset):
                 'fine_img_kpt_index':torch.from_numpy(fine_xy_kpts_index).long() ,      #128
                 'fine_center_kpt_coors':torch.from_numpy(fine_center_kpts_coors.astype(np.int32)),
                 'coarse_img_outline_index':torch.from_numpy(img_outline_index).long(),
+                'valid_kpt': valid_kpt,
 
                 }
-               
-
