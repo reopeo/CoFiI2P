@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from model.network import CoFiI2P
-from data.r3live import r3live_pc_img_dataset
+from data.r3live import r3live_pc_img_dataset, r3live_collate_fn
 from data.kitti import kitti_pc_img_dataset
 from data.nuscenes import nuscenes_pc_img_dataset
 from data.options import Options_r3live,Options_KITTI,Options_Nuscenes
@@ -33,6 +33,8 @@ def test_acc(device, model,testdataloader,opt,topk_range = 5):
     count = 0
     mode = 'val'
     for step,data in enumerate(testdataloader):
+        if data is None:
+            continue
         if count >= 6:
             break
         model.eval()
@@ -118,12 +120,15 @@ if __name__=='__main__':
     if args.dataset == "r3live":
         options = Options_r3live
         dataset = r3live_pc_img_dataset
+        collate_fn = r3live_collate_fn
     elif args.dataset == "kitti":
         options = Options_KITTI
         dataset = kitti_pc_img_dataset
+        collate_fn = None
     elif args.dataset == "nuscenes":
         options = Options_Nuscenes
         dataset = nuscenes_pc_img_dataset
+        collate_fn = None
     else:
         raise ValueError("dataset name invalid, only support KITTI Odometry and Nuscenes now!")
 
@@ -143,13 +148,15 @@ if __name__=='__main__':
                                             batch_size = opt.train_batch_size,
                                             shuffle = True,
                                             drop_last = True,
-                                            num_workers = opt.num_workers)
+                                            num_workers = opt.num_workers,
+                                            collate_fn = collate_fn)
     
     testloader=torch.utils.data.DataLoader(test_dataset,
                                            batch_size = opt.val_batch_size,
                                            shuffle = False,
                                            drop_last = False,
-                                           num_workers = opt.num_workers)
+                                           num_workers = opt.num_workers,
+                                           collate_fn = collate_fn)
     device = opt.device
     model=CoFiI2P(opt).to(device)
     if args.ft_from:
@@ -187,6 +194,8 @@ if __name__=='__main__':
     
     for epoch in range(opt.epoch):
         for step,data in enumerate(trainloader):
+            if data is None:
+                continue
             global_step+=1
             index = data['index']
             start_time = time.time()

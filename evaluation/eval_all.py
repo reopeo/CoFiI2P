@@ -10,7 +10,7 @@ import datetime
 import json
 
 from model.network import CoFiI2P
-from data.r3live import r3live_pc_img_dataset
+from data.r3live import r3live_pc_img_dataset, r3live_collate_fn
 from data.kitti import kitti_pc_img_dataset
 from data.nuscenes import nuscenes_pc_img_dataset
 from data.options import * 
@@ -34,12 +34,15 @@ if __name__=='__main__':
     if args.dataset == "r3live":
         opt = Options_r3live()
         dataset = r3live_pc_img_dataset(opt,"val",is_front=False)
+        collate_fn = r3live_collate_fn
     elif args.dataset == "kitti":
         opt = Options_KITTI()
         dataset = kitti_pc_img_dataset(opt,"val",is_front=False)
+        collate_fn = None
     elif args.dataset == "nuscenes":
         opt = Options_Nuscenes()
         dataset = nuscenes_pc_img_dataset(opt,"val",is_front=False)
+        collate_fn = None
     else:
         raise ValueError("only support KITTI and Nuscenes now!")
 
@@ -49,7 +52,8 @@ if __name__=='__main__':
                                            batch_size=opt.val_batch_size,
                                            shuffle=False,
                                            drop_last=False,
-                                           num_workers=opt.num_workers)
+                                           num_workers=opt.num_workers,
+                                           collate_fn=collate_fn)
     model=CoFiI2P(opt)
     model.load_state_dict(torch.load(args.ckpt))
     model=model.cuda()
@@ -67,6 +71,8 @@ if __name__=='__main__':
     # infer_time = []
     with torch.no_grad():
         for step,data in enumerate(testloader):
+            if data is None:
+                continue
             save_dict = {}
             # total_start = time.time()
             model.eval()

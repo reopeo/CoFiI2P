@@ -14,10 +14,15 @@ import matplotlib.image as mpimg
 from scipy.sparse import coo_matrix
 import time
 from pathlib import Path
+from torch.utils.data.dataloader import default_collate
 
 from model.kpconv.preprocess_data import precompute_point_cloud_stack_mode, precompute_point_cloud_cuda
 from model.network import point2node
-# from ...model.kpconv.kp_backbone import KPConvFPN
+
+def r3live_collate_fn(batch):
+    if any(item is None for item in batch):
+        return None
+    return default_collate(batch)
 
 class R3liveCalibHelper:
     def __init__(self, root_path):
@@ -375,10 +380,8 @@ class r3live_pc_img_dataset(data.Dataset):
         num_in = int(np.sum(fine_is_in_picture))
         num_out = int(np.sum(~fine_is_in_picture))
         if num_out > 0:
-            print(f"[r3live] index={index}, seq={seq}, seq_i={seq_i}: fine projection {num_in} in / {num_out} out of image")
-            fine_xy[0, :] = np.clip(fine_xy[0, :], 0, self.img_W * 0.5 - 1)
-            fine_xy[1, :] = np.clip(fine_xy[1, :], 0, self.img_H * 0.5 - 1)
-            valid_kpt = False
+            print(f"[r3live] index={index}, seq={seq}, seq_i={seq_i}: fine projection {num_in} in / {num_out} out of image, skipping.")
+            return None
 
         # get coarse inline points on fine feature map 
         fine_xy_kpts_index = fine_xy[1,:]*self.img_W*0.5 +fine_xy[0,:]
