@@ -8,6 +8,8 @@ from pathlib import Path
 import cv2
 import datetime
 import json
+import signal
+import sys
 
 from model.network import CoFiI2P
 from data.r3live import r3live_pc_img_dataset, r3live_collate_fn
@@ -29,7 +31,17 @@ if __name__=='__main__':
     parser.add_argument("ckpt",type = str, help = "checkpoint path")
     parser.add_argument("dataset",type = str,help = "eval dataset")
     parser.add_argument("--eval_path", type=str, default = "eval_results", help = "path for evaluation files")
+    parser.add_argument("--step_timeout", type=int, default=5, help="per-step timeout in seconds (0 to disable)")
     args = parser.parse_args()
+
+    use_sigalrm = hasattr(signal, "SIGALRM") and args.step_timeout > 0
+    if use_sigalrm:
+        def _alarm_handler(signum, frame):
+            raise TimeoutError("step timeout")
+        signal.signal(signal.SIGALRM, _alarm_handler)
+    else:
+        if args.step_timeout > 0:
+            print("Warning: SIGALRM not available on this platform; per-step timeout disabled.", file=sys.stderr)
 
     if args.dataset == "r3live":
         opt = Options_r3live()
@@ -77,69 +89,77 @@ if __name__=='__main__':
             # total_start = time.time()
             model.eval()
             mode = 'test'
-            # optimizer.zero_grad()
-            img=data['img'].cuda()
-            pc_data_dict=data['pc_data_dict']
-            for key in pc_data_dict:
-                for j in range(len(pc_data_dict[key])):
-                    pc_data_dict[key][j] = torch.squeeze(pc_data_dict[key][j]).cuda()
-            pc_data_dict['feats'] = torch.squeeze(pc_data_dict['feats']).cuda()
-            K_4=torch.squeeze(data['K_4'].cuda())
-            K=torch.squeeze(data['K'].cuda())
-            P=torch.squeeze(data['P']).cpu().numpy()
-            coarse_img_mask=torch.squeeze(data['coarse_img_mask']).cuda()  # [20, 64]
-            pc_kpt_idx=torch.squeeze(data['pc_kpt_idx']).cuda()  #(128)
-            pc_outline_idx=torch.squeeze(data['pc_outline_idx']).cuda()  #(128)
-            fine_img_kpt_index = torch.squeeze(data['fine_img_kpt_index']).cuda()  # [128]
-            
-            coarse_img_kpt_idx=torch.squeeze(data['coarse_img_kpt_idx']).cuda()  # [128]
-            fine_center_kpt_coors = torch.squeeze(data['fine_center_kpt_coors']).cuda()  #[3, 128]
-            fine_xy = torch.squeeze(data['fine_xy_coors']).cuda()
-            fine_pc_inline_index = torch.squeeze(data['fine_pc_inline_index']).cuda()
+            # set per-step alarm
+            try:
+                if use_sigalrm:
+                    signal.alarm(args.step_timeout)
+                img=data['img'].cuda()
+                pc_data_dict=data['pc_data_dict']
+                for key in pc_data_dict:
+                    for j in range(len(pc_data_dict[key])):
+                        pc_data_dict[key][j] = torch.squeeze(pc_data_dict[key][j]).cuda()
+                pc_data_dict['feats'] = torch.squeeze(pc_data_dict['feats']).cuda()
+                K_4=torch.squeeze(data['K_4'].cuda())
+                K=torch.squeeze(data['K'].cuda())
+                P=torch.squeeze(data['P']).cpu().numpy()
+                coarse_img_mask=torch.squeeze(data['coarse_img_mask']).cuda()  # [20, 64]
+                pc_kpt_idx=torch.squeeze(data['pc_kpt_idx']).cuda()  #(128)
+                pc_outline_idx=torch.squeeze(data['pc_outline_idx']).cuda()  #(128)
+                fine_img_kpt_index = torch.squeeze(data['fine_img_kpt_index']).cuda()  # [128]
+                
+                coarse_img_kpt_idx=torch.squeeze(data['coarse_img_kpt_idx']).cuda()  # [128]
+                fine_center_kpt_coors = torch.squeeze(data['fine_center_kpt_coors']).cuda()  #[3, 128]
+                fine_xy = torch.squeeze(data['fine_xy_coors']).cuda()
+                fine_pc_inline_index = torch.squeeze(data['fine_pc_inline_index']).cuda()
 
-            img_x=torch.linspace(0,coarse_img_mask.size(-1)-1,coarse_img_mask.size(-1)).view(1,-1).expand(coarse_img_mask.size(-2),coarse_img_mask.size(-1)).unsqueeze(0).cuda()
-            img_y=torch.linspace(0,coarse_img_mask.size(-2)-1,coarse_img_mask.size(-2)).view(-1,1).expand(coarse_img_mask.size(-2),coarse_img_mask.size(-1)).unsqueeze(0).cuda()
-            # [2, 20, 64] coarse level
-            img_xy=torch.cat((img_x,img_y),dim=0)
-            
-            img_features,pc_features, coarse_img_score, coarse_pc_score\
-                , fine_img_feature_patch, fine_pc_inline_feature, fine_center_xy\
-                ,coarse_pc_points=model(pc_data_dict,img, fine_center_kpt_coors,fine_xy, fine_pc_inline_index, mode)    # [1, 128, 20, 64] ,[128, 2560]
+                img_x=torch.linspace(0,coarse_img_mask.size(-1)-1,coarse_img_mask.size(-1)).view(1,-1).expand(coarse_img_mask.size(-2),coarse_img_mask.size(-1)).unsqueeze(0).cuda()
+                img_y=torch.linspace(0,coarse_img_mask.size(-2)-1,coarse_img_mask.size(-2)).view(-1,1).expand(coarse_img_mask.size(-2),coarse_img_mask.size(-1)).unsqueeze(0).cuda()
+                # [2, 20, 64] coarse level
+                img_xy=torch.cat((img_x,img_y),dim=0)
+                
+                img_features,pc_features, coarse_img_score, coarse_pc_score\
+                    , fine_img_feature_patch, fine_pc_inline_feature, fine_center_xy\
+                    ,coarse_pc_points=model(pc_data_dict,img, fine_center_kpt_coors,fine_xy, fine_pc_inline_index, mode)    # [1, 128, 20, 64] ,[128, 2560]
 
-            # fine_img_feature_flatten = rearrange(fine_img_feature_patch, 'n c h w -> n c (h w)')
-            fine_pc_inline_feature = fine_pc_inline_feature.unsqueeze(-1)
-            dist = torch.cosine_similarity(fine_img_feature_patch.unsqueeze(-1), fine_pc_inline_feature.unsqueeze(-2))
-            dist = torch.squeeze(dist)
-            predict_index = torch.argmax(dist, dim=1)
-            fine_xy = fine_center_xy - 2
-            fine_xy[0] = fine_xy[0] + predict_index // 4
-            fine_xy[1] = fine_xy[1] + predict_index % 4
+                # fine_img_feature_flatten = rearrange(fine_img_feature_patch, 'n c h w -> n c (h w)')
+                fine_pc_inline_feature = fine_pc_inline_feature.unsqueeze(-1)
+                dist = torch.cosine_similarity(fine_img_feature_patch.unsqueeze(-1), fine_pc_inline_feature.unsqueeze(-2))
+                dist = torch.squeeze(dist)
+                predict_index = torch.argmax(dist, dim=1)
+                fine_xy = fine_center_xy - 2
+                fine_xy[0] = fine_xy[0] + predict_index // 4
+                fine_xy[1] = fine_xy[1] + predict_index % 4
 
-            is_success,R,t,inliers = cv2.solvePnPRansac(cameraMatrix=K.cpu().numpy(), imagePoints=fine_xy.T.cpu().numpy(), objectPoints=coarse_pc_points.cpu().numpy(), iterationsCount=10000, distCoeffs=None)
-            if is_success is True:
-                success_num += 1    
-                R,_=cv2.Rodrigues(R)
-                T_pred=np.eye(4)
-                T_pred[0:3,0:3]=R
-                T_pred[0:3,3:]=t
-                t_diff,angles_diff=get_P_diff(T_pred,P)
-                print(step, angles_diff, t_diff)
-                t_diff_set.append(t_diff)
-                angles_diff_set.append(angles_diff)
-            # totol_end = time.time()
-            # total_time.append(totol_end-total_start)
+                is_success,R,t,inliers = cv2.solvePnPRansac(cameraMatrix=K.cpu().numpy(), imagePoints=fine_xy.T.cpu().numpy(), objectPoints=coarse_pc_points.cpu().numpy(), iterationsCount=10000, distCoeffs=None)
+                if is_success is True:
+                    success_num += 1    
+                    R,_=cv2.Rodrigues(R)
+                    T_pred=np.eye(4)
+                    T_pred[0:3,0:3]=R
+                    T_pred[0:3,3:]=t
+                    t_diff,angles_diff=get_P_diff(T_pred,P)
+                    print(step, angles_diff, t_diff)
+                    t_diff_set.append(t_diff)
+                    angles_diff_set.append(angles_diff)
 
-            save_dict['GT_P'] = P # [4, 4]
-            save_dict['pred_P'] = T_pred # [4, 4]
-            save_dict['K'] = K # [3, 3]
-            save_dict['points'] = pc_data_dict['points'][1] # [10240, 3]
-            save_dict['P'] = P # [1, 3, 160, 512]
-            save_dict['superpoints'] = pc_data_dict['points'][-1] # [1280, 3]
-            save_dict['superpoints_score'] = coarse_pc_score # [1, 1, 1280]
-            save_dict['fine_xy'] = fine_xy
-            save_dict['object_points'] = coarse_pc_points
-            # print(eval_path / str('%06d.npy'%(step)))
-            np.save(eval_path / str('%06d.npy'%(step)), save_dict)
+                save_dict['GT_P'] = P # [4, 4]
+                save_dict['pred_P'] = T_pred if 'T_pred' in locals() else None # [4, 4]
+                save_dict['K'] = K # [3, 3]
+                save_dict['points'] = pc_data_dict['points'][1] # [10240, 3]
+                save_dict['P'] = P # [1, 3, 160, 512]
+                save_dict['superpoints'] = pc_data_dict['points'][-1] # [1280, 3]
+                save_dict['superpoints_score'] = coarse_pc_score # [1, 1, 1280]
+                save_dict['fine_xy'] = fine_xy
+                save_dict['object_points'] = coarse_pc_points
+                np.save(eval_path / str('%06d.npy'%(step)), save_dict)
+            except TimeoutError:
+                print(f"Step {step} timed out after {args.step_timeout}s, skipping.", file=sys.stderr)
+                if use_sigalrm:
+                    signal.alarm(0)
+                continue
+            finally:
+                if use_sigalrm:
+                    signal.alarm(0)
         # total_time = np.array(total_time)
         t_diff_set = np.array(t_diff_set)
         angles_diff_set = np.array(angles_diff_set)
