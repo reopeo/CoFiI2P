@@ -4,7 +4,7 @@ import torch
 
 class Options_r3live:
     def __init__(self):
-        self.epoch = 5
+        self.epoch = 25
         self.data_path = "datasets/r3live"
         self.root_path = '.'
         self.save_path = "checkpoints"
