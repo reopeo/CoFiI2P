@@ -32,6 +32,7 @@ if __name__=='__main__':
     parser.add_argument("dataset",type = str,help = "eval dataset")
     parser.add_argument("--eval_path", type=str, default = "eval_results", help = "path for evaluation files")
     parser.add_argument("--step_timeout", type=int, default=5, help="per-step timeout in seconds (0 to disable)")
+    parser.add_argument("--max_translation", type=float, default=1e10, help="max allowed translation (m) from PnP; larger -> skip")
     args = parser.parse_args()
 
     use_sigalrm = hasattr(signal, "SIGALRM") and args.step_timeout > 0
@@ -138,6 +139,8 @@ if __name__=='__main__':
                     T_pred[0:3,0:3]=R
                     T_pred[0:3,3:]=t
                     t_diff,angles_diff=get_P_diff(T_pred,P)
+                    if t_diff > args.max_translation:
+                        raise ValueError(f"Unreasonable PnP result t={t_diff:.2f}, skipping")
                     print(step, angles_diff, t_diff)
                     t_diff_set.append(t_diff)
                     angles_diff_set.append(angles_diff)
@@ -152,8 +155,10 @@ if __name__=='__main__':
                 save_dict['fine_xy'] = fine_xy
                 save_dict['object_points'] = coarse_pc_points
                 np.save(eval_path / str('%06d.npy'%(step)), save_dict)
-            except TimeoutError:
-                print(f"Step {step} timed out after {args.step_timeout}s, skipping.", file=sys.stderr)
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                print(f"Step {step} failed with exception: {e}", file=sys.stderr)
                 if use_sigalrm:
                     signal.alarm(0)
                 continue
